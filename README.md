@@ -1,60 +1,93 @@
-This is a small boilerplate for take‑home assignments built with the Next.js App Router, a simple BFF layer, Neon Postgres, and an OpenAI-backed chat endpoint.
+# AI File Assistant
 
-The app uses:
+Personal file storage with upload, browse, share (with optional PII redaction), and AI chat over PDFs. Sign in with Google, upload PDFs (≤50MB), manage files, share via public links, and ask questions over your documents.
 
-- Next.js App Router (TypeScript, `src/` layout, `@/*` alias)
-- BFF pattern via route handlers under `app/api`
-- Neon Postgres through a lightweight `postgres` client (via `DATABASE_URL`)
-- OpenAI chat completions via a server-only `/api/chat` route
-- Environment variable validation with `zod`
-- A tiny server-only example "model" under `src/server/bff` exposed via `/api/examples`
+## Tech stack
+
+| Layer   | Technology      |
+| ------- | --------------- |
+| Framework | Next.js 16, React 19 |
+| Styling | Tailwind CSS v4 |
+| Database | Neon Postgres |
+| Auth    | NextAuth.js + Google |
+| Storage | AWS S3 |
+| AI      | OpenAI ChatGPT API |
+| Deploy  | Vercel |
 
 ## Running locally
 
-From the repository root:
+1. **Database setup**
 
-```bash
-yarn install
-cp .env.example .env.local
-```
+   Create a Neon Postgres database and run the schema:
 
-Then edit `.env.local` to set:
+   ```bash
+   psql $DATABASE_URL -f scripts/init-db.sql
+   ```
 
-- `DATABASE_URL` – your Neon Postgres connection string (pooled)
-- `OPENAI_API_KEY` – your OpenAI API key
-- `LLM_MODEL` – optional, defaults to `gpt-4.1-mini`
+2. **Environment variables**
 
-Finally, start the dev server:
+   ```bash
+   cp .env.example .env.local
+   ```
 
-```bash
-yarn dev
-```
+   Edit `.env.local` with:
 
-Open `http://localhost:3000` to view the app. The home page is a demo harness only (no app-specific logic) and includes:
+   - `DATABASE_URL` – Neon Postgres connection string (pooled)
+   - `NEXTAUTH_SECRET` – random string (e.g. `openssl rand -base64 32`)
+   - `NEXTAUTH_URL` – `http://localhost:3000`
+   - `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` – from [Google Cloud Console](https://console.cloud.google.com/)
+   - `OPENAI_API_KEY` – OpenAI API key
+   - `LLM_MODEL` – optional, defaults to `gpt-4.1-mini`
+   - `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_REGION` / `S3_BUCKET` – AWS credentials and bucket
 
-- A **Database health** panel that calls `GET /api/health` and runs a `select 1 as ok` query via the shared Neon `sql` helper.
-- An **LLM chat** panel that calls `POST /api/chat` with `{ prompt }` and displays the model response.
+3. **Google OAuth**
 
-All secrets remain server-side; the browser never sees `DATABASE_URL` or `OPENAI_API_KEY`.
+   In Google Cloud Console, create OAuth 2.0 credentials and add:
 
-## API overview (BFF pattern)
+   - Authorized redirect URI: `http://localhost:3000/api/auth/callback/google`
 
-This project follows a Backend‑for‑Frontend (BFF) pattern: the frontend only talks to Next.js route handlers under `app/api`, and those handlers in turn talk to external services or server-only modules.
+4. **Start dev server**
 
-- `GET /api/health` – checks database connectivity using the shared Neon `sql` client.
-- `POST /api/chat` – validates `{ prompt: string }` with `zod`, calls OpenAI's chat completions API using `env.OPENAI_API_KEY` and `env.LLM_MODEL`, and returns `{ content }` or `{ error, details }`. It uses the Node.js runtime and an `AbortController` with a 20s timeout.
-- `GET /api/examples` – returns items from a simple in-memory model defined in `src/server/bff/example.ts`, demonstrating how to keep domain logic in server-only modules and expose them via the BFF.
+   ```bash
+   npm install
+   npm run dev
+   ```
 
-## Deployment on Vercel
+   Open `http://localhost:3000`.
 
-To deploy:
+## Features
 
-1. Push this project to a GitHub (or GitLab/Bitbucket) repository.
-2. In the Vercel dashboard, import the repo.
-3. In the project settings, add the following Environment Variables for the Production (and Preview) environments:
-   - `DATABASE_URL`
-   - `OPENAI_API_KEY`
-   - `LLM_MODEL` (optional, e.g. `gpt-4.1-mini`)
-4. Trigger a deployment. Vercel will detect the Next.js app and use the default build and dev commands (`yarn build`, `yarn dev`).
+- **Auth** – Google OAuth via NextAuth.js
+- **Upload** – PDF files ≤50MB, stored in S3 via presigned PUT URLs
+- **Browse** – List, download, and delete your files
+- **Share** – Create public links with optional “Black out PII before sharing”
+- **PII redaction** – Emails, phone numbers, SSN-like patterns replaced with `[REDACTED]`
+- **Chat** – Ask questions over extracted text from your PDFs
 
-The route handlers are configured to run with the default Node.js runtime, which works well with the Neon `postgres` client and serverless environments.
+## API routes
+
+| Route | Method | Purpose |
+| ----- | ------ | ------- |
+| `/api/auth/[...nextauth]` | — | NextAuth handlers |
+| `/api/files` | GET | List user files |
+| `/api/files` | POST | Create upload (presigned URL + metadata) |
+| `/api/files/[id]` | GET | File metadata |
+| `/api/files/[id]` | DELETE | Delete file |
+| `/api/files/[id]/download` | GET | Presigned download URL |
+| `/api/files/[id]/confirm` | POST | Confirm upload & extract text |
+| `/api/share` | POST | Create share link |
+| `/api/share` | DELETE | Revoke share link |
+| `/api/share/[token]` | GET | Get download URL for share (no auth) |
+| `/api/chat` | POST | Chat over user’s PDF text |
+
+## Vercel deployment
+
+1. Import the repo into Vercel.
+2. Add all env vars from `.env.example`.
+3. Set `NEXTAUTH_URL` to your production URL (e.g. `https://your-app.vercel.app`).
+4. In Google Cloud Console, add the production callback: `https://your-app.vercel.app/api/auth/callback/google`.
+
+## Notes
+
+- S3 uploads use presigned PUT URLs, so large files (up to 50MB) bypass Vercel’s 4.5MB body limit.
+- After uploading a file, the client calls `/api/files/[id]/confirm` to trigger PDF text extraction for chat.
